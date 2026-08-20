@@ -20,10 +20,87 @@ const app = express();
 app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json());
+const normalizeOrigin = (value) => {
+  if (!value) return value;
+
+  return value
+    .trim()
+    .replace(/\/+$/, '');
+};
+
+const frontendUrl =
+  normalizeOrigin(
+    process.env.FRONTEND_URL
+  );
+
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  frontendUrl,
+].filter(Boolean);
+
+console.log(
+  '[CORS] Allowed origins:',
+  allowedOrigins
+);
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_ORIGIN || '*',
+    origin(origin, callback) {
+      /*
+       * Allow requests without an Origin header.
+       * Useful for health checks/server-to-server calls.
+       */
+      if (!origin) {
+        return callback(
+          null,
+          true
+        );
+      }
+
+      const normalizedOrigin =
+        normalizeOrigin(origin);
+
+      if (
+        allowedOrigins.includes(
+          normalizedOrigin
+        )
+      ) {
+        return callback(
+          null,
+          true
+        );
+      }
+
+      console.warn(
+        `[CORS] Blocked origin: ${origin}`
+      );
+
+      return callback(
+        new Error(
+          'Not allowed by CORS'
+        )
+      );
+    },
+
     credentials: true,
+
+    methods: [
+      'GET',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+      'OPTIONS',
+    ],
+
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+    ],
+
+    optionsSuccessStatus: 204,
   })
 );
 
