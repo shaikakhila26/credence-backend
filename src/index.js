@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -17,16 +18,48 @@ const profileRoutes = require('./routes/profile');
 
 const app = express();
 
-app.use(helmet());
-app.use(morgan('dev'));
-app.use(express.json());
-const normalizeOrigin = (value) => {
-  if (!value) return value;
+/*
+|--------------------------------------------------------------------------
+| Basic middleware
+|--------------------------------------------------------------------------
+*/
 
-  return value
+app.use(helmet());
+
+app.use(morgan('dev'));
+
+app.use(
+  express.json({
+    limit: '10mb',
+  })
+);
+
+/*
+|--------------------------------------------------------------------------
+| CORS
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| FRONTEND_URL in Render MUST be:
+|
+| https://credence-frontend-gules.vercel.app
+|
+| NOT:
+|
+| https://credence-frontend-gules.vercel.app/
+|
+|--------------------------------------------------------------------------
+*/
+
+function normalizeOrigin(value) {
+  if (!value) {
+    return null;
+  }
+
+  return String(value)
     .trim()
     .replace(/\/+$/, '');
-};
+}
 
 const frontendUrl =
   normalizeOrigin(
@@ -37,7 +70,14 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   frontendUrl,
-].filter(Boolean);
+]
+  .filter(Boolean)
+  .map(normalizeOrigin);
+
+console.log(
+  '[CORS] FRONTEND_URL from environment:',
+  process.env.FRONTEND_URL || '(not set)'
+);
 
 console.log(
   '[CORS] Allowed origins:',
@@ -48,14 +88,15 @@ app.use(
   cors({
     origin(origin, callback) {
       /*
-       * Allow requests without an Origin header.
-       * Useful for health checks/server-to-server calls.
+       * Requests without an Origin header are allowed.
+       *
+       * Examples:
+       * - Render health checks
+       * - curl
+       * - server-to-server requests
        */
       if (!origin) {
-        return callback(
-          null,
-          true
-        );
+        return callback(null, true);
       }
 
       const normalizedOrigin =
@@ -66,10 +107,7 @@ app.use(
           normalizedOrigin
         )
       ) {
-        return callback(
-          null,
-          true
-        );
+        return callback(null, true);
       }
 
       console.warn(
@@ -78,7 +116,7 @@ app.use(
 
       return callback(
         new Error(
-          'Not allowed by CORS'
+          `Origin ${origin} is not allowed by CORS`
         )
       );
     },
@@ -98,32 +136,165 @@ app.use(
       'Content-Type',
       'Authorization',
       'X-Requested-With',
+      'Accept',
+    ],
+
+    exposedHeaders: [
+      'Content-Length',
+      'Content-Type',
     ],
 
     optionsSuccessStatus: 204,
   })
 );
 
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'credence-backend' }));
+/*
+|--------------------------------------------------------------------------
+| Health checks
+|--------------------------------------------------------------------------
+*/
 
-app.use('/api/applications', applicationsRoutes);
-app.use('/api/eligibility', eligibilityRoutes);
-app.use('/api/loan-terms', loanTermsRoutes);
-app.use('/api/bank', bankRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/auth/phone', authPhoneRoutes);
-app.use('/api/kyc', kycRoutes);
-app.use('/api/declaration', declarationRoutes);
-app.use('/api/selfie', selfieRoutes);
-app.use('/api/profile', profileRoutes);
+app.get(
+  '/',
+  (req, res) => {
+    res.json({
+      success: true,
+      service: 'CREDENCE Backend',
+      status: 'running',
+    });
+  }
+);
 
-// Central error handler (catches anything that slips past route try/catch)
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Something went wrong' });
-});
+app.get(
+  '/health',
+  (req, res) => {
+    res.json({
+      status: 'ok',
+      service: 'credence-backend',
+      timestamp:
+        new Date().toISOString(),
+    });
+  }
+);
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`CREDENCE backend running on port ${PORT}`);
-});
+/*
+|--------------------------------------------------------------------------
+| API routes
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  '/api/applications',
+  applicationsRoutes
+);
+
+app.use(
+  '/api/eligibility',
+  eligibilityRoutes
+);
+
+app.use(
+  '/api/loan-terms',
+  loanTermsRoutes
+);
+
+app.use(
+  '/api/bank',
+  bankRoutes
+);
+
+app.use(
+  '/api/admin',
+  adminRoutes
+);
+
+app.use(
+  '/api/auth/phone',
+  authPhoneRoutes
+);
+
+app.use(
+  '/api/kyc',
+  kycRoutes
+);
+
+app.use(
+  '/api/declaration',
+  declarationRoutes
+);
+
+app.use(
+  '/api/selfie',
+  selfieRoutes
+);
+
+app.use(
+  '/api/profile',
+  profileRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| 404 handler
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      error: 'Route not found',
+      path: req.originalUrl,
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Central error handler
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  (err, req, res, next) => {
+    console.error(
+      'Unhandled error:',
+      err
+    );
+
+    if (
+      err.message &&
+      err.message.includes(
+        'not allowed by CORS'
+      )
+    ) {
+      return res.status(403).json({
+        error:
+          'CORS origin not allowed',
+      });
+    }
+
+    res.status(500).json({
+      error:
+        'Something went wrong',
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Server
+|--------------------------------------------------------------------------
+*/
+
+const PORT =
+  process.env.PORT || 5000;
+
+app.listen(
+  PORT,
+  '0.0.0.0',
+  () => {
+    console.log(
+      `CREDENCE backend running on port ${PORT}`
+    );
+  }
+);
